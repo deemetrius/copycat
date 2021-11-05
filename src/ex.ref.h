@@ -4,6 +4,7 @@
 namespace ex {
 
 using id = std::ptrdiff_t;
+using uid = std::size_t;
 
 //
 

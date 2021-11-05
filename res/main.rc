@@ -1,2 +1,3 @@
+// CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "copycat.exe.manifest"
 1 24 "copycat.exe.manifest"
 0 ICON "cat_come.ico"
