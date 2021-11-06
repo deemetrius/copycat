@@ -14,10 +14,23 @@ template <>
 struct traits_text<wchar_t> {
 	EX_TYPE_ALIAS(wchar_t)
 
-	static constexpr type v_empty[] = L"";
+	static constexpr type
+	v_empty[] = L"",
+	v_space[] = L" \f\n\r\t\v";
 
 	inline static id length(const_pointer cs) {
 		return std::wcslen(cs);
+	}
+
+	inline static id spn(const_pointer dest, const_pointer src) {
+		return std::wcsspn(dest, src);
+	}
+
+	inline static const_pointer chr(const_pointer str, type ch) {
+		return std::wcschr(str, ch);
+	}
+	inline static pointer chr(pointer str, type ch) {
+		return std::wcschr(str, ch);
 	}
 
 	inline static pointer copy_n(pointer dest, const_pointer src, id count) {
@@ -33,10 +46,23 @@ template <>
 struct traits_text<char> {
 	EX_TYPE_ALIAS(char)
 
-	static constexpr type v_empty[] = "";
+	static constexpr type
+	v_empty[] = "",
+	v_space[] = " \f\n\r\t\v";
 
 	inline static id length(const_pointer cs) {
 		return std::strlen(cs);
+	}
+
+	inline static id spn(const_pointer dest, const_pointer src) {
+		return std::strspn(dest, src);
+	}
+
+	inline static const_pointer chr(const_pointer str, type ch) {
+		return std::strchr(str, ch);
+	}
+	inline static pointer chr(pointer str, type ch) {
+		return std::strchr(str, ch);
 	}
 
 	inline static pointer copy_n(pointer dest, const_pointer src, id count) {
@@ -53,6 +79,7 @@ struct traits_text<char> {
 enum class n_from_new { val };
 enum class n_empty { val };
 enum class n_from_string { val };
+enum class n_copy { val };
 
 namespace detail {
 
@@ -92,15 +119,17 @@ struct basic_text : public ref< detail::keep_text<T>, with<closer_one>::closer_c
 	basic_text(n_from_new nn, pointer s, id len) {
 		this->h_ = new keep(nn, s, len);
 	}
-	template <class S>
-	basic_text(n_from_string, const S & str) : basic_text() {
-		if( id len = str.size() ) {
+	basic_text(n_copy, const_pointer cs, id len) : basic_text() {
+		if( len ) {
 			pointer s;
 			base::operator = (new keep(n_from_new::val, s = new type[len +1], len) );
-			traits::copy_n(s, str.c_str(), len);
+			traits::copy_n(s, cs, len);
 			s[len] = 0;
 		}
 	}
+	basic_text(const_pointer cs_begin, const_pointer cs_end) : basic_text(n_copy::val, cs_begin, cs_end - cs_begin) {}
+	template <class S>
+	basic_text(n_from_string, const S & str) : basic_text(n_copy::val, str.c_str(), str.size() ) {}
 
 	template <id N>
 	basic_text(const type (& cs)[N]) {
@@ -116,6 +145,7 @@ struct basic_text : public ref< detail::keep_text<T>, with<closer_one>::closer_c
 	}
 
 	operator bool () const { return this->h_->len_; }
+	bool operator ! () const { return !this->h_->len_; }
 
 	id calc_len() const {
 		return this->h_->len_ = traits::length(this->h_->cs_);
@@ -174,6 +204,24 @@ struct actions_text {
 
 	static text implode(std::initializer_list<text> items, text sep = text::inst_empty() ) {
 		return detail_implode(items, sep);
+	}
+
+	template <class C, template <class C1> class T>
+	static basic_text<C, T> trim(const basic_text<C, T> & tx) {
+		using result = basic_text<C, T>;
+		using traits = typename result::traits;
+		using const_pointer = typename result::const_pointer;
+		if( !tx ) return tx;
+		const_pointer cs = tx->cs_;
+		id skip = traits::spn(cs, traits::v_space);
+		cs += skip;
+		id len = tx->len_ - skip;
+		if( len ) for(
+			const_pointer cs_end = cs + len -1;
+			cs_end >= cs && traits::chr(traits::v_space, *cs_end);
+			--cs_end, --len
+		);
+		return result(n_copy::val, cs, len);
 	}
 };
 

@@ -70,6 +70,14 @@ INT WINAPI WinMain(HINSTANCE h_inst, HINSTANCE h_inst_prev, PSTR args, INT cmd_s
 		}
 	}
 
+	// main menu
+	if(( cat.menu_main = CreateMenu() )) {
+		AppendMenu(cat.menu_main, MF_ENABLED | MF_STRING, app::id_save, _T("Sa&ve") );
+		AppendMenu(cat.menu_main, MF_ENABLED | MF_STRING, app::id_load, _T("&Load") );
+		AppendMenu(cat.menu_main, MF_ENABLED | MF_STRING | MFT_RIGHTJUSTIFY, app::id_about, _T("Abou&t") );
+		AppendMenu(cat.menu_main, MF_ENABLED | MF_STRING, app::id_exit, _T("&Quit") );
+	}
+
 	cat.dlu.rescale();
 	// main window
 	cat.wnd_main = CreateWindowEx(
@@ -82,7 +90,7 @@ INT WINAPI WinMain(HINSTANCE h_inst, HINSTANCE h_inst_prev, PSTR args, INT cmd_s
 		400, // width
 		400, //dlu.space_margin_y * 2 + size_list_y + GetSystemMetrics(SM_CYCAPTION) + GetSystemMetrics(SM_CYSIZEFRAME /*SM_CYFIXEDFRAME*/) * 2, // height
 		HWND_DESKTOP, // parent
-		NULL, // menu
+		cat.menu_main, // menu
 		h_inst, // instance handler
 		NULL // no creation data
 	);
@@ -92,7 +100,7 @@ INT WINAPI WinMain(HINSTANCE h_inst, HINSTANCE h_inst_prev, PSTR args, INT cmd_s
 	}
 
 	//
-	cat.ui_create(h_inst);
+	cat.on_create(h_inst);
 	cat.make_menu();
 	ShowWindow(cat.wnd_main, SW_SHOWNORMAL);
 	SetFocus(cat.wnd_name);
@@ -109,6 +117,8 @@ INT WINAPI WinMain(HINSTANCE h_inst, HINSTANCE h_inst_prev, PSTR args, INT cmd_s
 	nid.hIcon = LoadIcon(h_inst, MAKEINTRESOURCE(0) );
 	StringCchCopy(nid.szTip, ARRAYSIZE(nid.szTip), _T("copycat") );
 	Shell_NotifyIcon(NIM_ADD, &nid);
+
+	cat.is_list_ready = true;
 
 	// msg loop
 	MSG messages;
@@ -137,6 +147,95 @@ LRESULT CALLBACK app::proc_main(HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_pa
 			ShowWindow(cat.wnd_main, SW_HIDE);
 		}
 		return 0;
+	case WM_NOTIFY:
+		{
+			LPNMHDR inf_short = (LPNMHDR) l_param;
+			switch( inf_short->idFrom ) {
+			case id_list:
+				switch( inf_short->code ) {
+				case LVN_ITEMCHANGED:
+					{
+						LPNMLISTVIEW inf = (LPNMLISTVIEW) l_param;
+						if( inf->iItem >= 0 /*&& inf->uNewState & LVIS_SELECTED*/ ) {
+							app & cat = app::instance();
+							/*LVHITTESTINFO hit{};
+							hit.pt = inf->ptAction;
+							ListView_HitTest(cat.wnd_list, &hit);
+							if( !(hit.flags & LVHT_ONITEMLABEL) ) {*/
+							if( inf->uChanged & LVIF_STATE && !(inf->uNewState & LVIS_SELECTED) ) {
+								cat.on_list_check(inf->iItem);
+							} else if( ListView_GetItemState(cat.wnd_list, inf->iItem, LVIS_SELECTED) ) {
+								cat.on_list_get(inf->iItem);
+								return 0;
+							}
+						}
+					}
+					break;
+				case NM_CLICK:
+				case NM_RCLICK:
+					{
+						LPNMITEMACTIVATE inf = (LPNMITEMACTIVATE) l_param;
+						if( inf->iItem >= 0 /*&& inf->uNewState & LVIS_SELECTED*/ ) {
+							app & cat = app::instance();
+							LVHITTESTINFO hit{};
+							hit.pt = inf->ptAction;
+							ListView_HitTest(cat.wnd_list, &hit);
+							if( !(hit.flags & LVHT_ONITEMLABEL) ) {
+								cat.on_list_check(inf->iItem);
+							} else if( ListView_GetItemState(cat.wnd_list, inf->iItem, LVIS_SELECTED) ) {
+								cat.on_list_get(inf->iItem);
+								return 0;
+							}
+						}
+					}
+					break;
+				case LVN_KEYDOWN:
+					{
+						LPNMLVKEYDOWN inf = (LPNMLVKEYDOWN) l_param;
+						switch( inf->wVKey ) {
+						case VK_F2:
+							{
+								app & cat = app::instance();
+								if(
+									LRESULT res; ListView_GetSelectedCount(cat.wnd_list) &&
+									(res = ListView_GetNextItem(cat.wnd_list, -1, LVNI_SELECTED) ) >= 0
+								) {
+									ListView_EditLabel(cat.wnd_list, res);
+									return 0;
+								}
+							}
+							break;
+						} // switch
+					}
+					break;
+				case LVN_ENDLABELEDIT:
+					{
+						NMLVDISPINFO * inf = (NMLVDISPINFO *) l_param;
+						if( inf->item.pszText ) {
+							text tx(ex::n_copy::val, inf->item.pszText, text::traits::length(inf->item.pszText) );
+							if(( tx = ex::actions_text::trim(tx) )) {
+								app & cat = app::instance();
+								t_data::t_item & item = cat.data.items[inf->item.iItem];
+								item.name = tx;
+								item.make_combined();
+								ListView_SetItemText(cat.wnd_list, inf->item.iItem, 0, tx->s_);
+								cat.is_data_changed = true;
+								return FALSE;
+							}
+						}
+					}
+					break;
+				case NM_RETURN:
+					{
+						app & cat = app::instance();
+						SetFocus(cat.wnd_name);
+					}
+					return 0;
+				} // switch code
+				break;
+			} // switch idFrom
+		}
+		break;
 	case WM_COMMAND:
 		switch( /*WORD code =*/ HIWORD(w_param) ) {
 		case 0:
@@ -146,10 +245,51 @@ LRESULT CALLBACK app::proc_main(HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_pa
 			case id_exit:
 				PostQuitMessage(0);
 				return 0;
+			case id_load:
+				{
+					app & cat = app::instance();
+					cat.is_list_ready = false;
+					ListView_DeleteAllItems(cat.wnd_list);
+					cat.data.read();
+					cat.make_menu();
+					cat.is_list_ready = true;
+				}
+				return 0;
 			case id_edit:
 				{
 					app & cat = app::instance();
-					cat.ui_main_restore();
+					cat.on_main_restore();
+				}
+				return 0;
+			case id_name_label:
+				{
+					app & cat = app::instance();
+					SetFocus(cat.wnd_name);
+				}
+				return 0;
+			case id_clear:
+				{
+					app & cat = app::instance();
+					SetWindowText(cat.wnd_name, empty_str);
+					SetWindowText(cat.wnd_value, empty_str);
+				}
+				return 0;
+			case id_set:
+				{
+					app & cat = app::instance();
+					cat.on_list_set();
+				}
+				return 0;
+			case id_add:
+				{
+					app & cat = app::instance();
+					cat.on_list_add();
+				}
+				return 0;
+			case id_del:
+				{
+					app & cat = app::instance();
+					cat.on_list_del();
 				}
 				return 0;
 			default:
@@ -165,32 +305,27 @@ LRESULT CALLBACK app::proc_main(HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_pa
 							return 0;
 						case 1:
 							{
-								cat.ui_main_restore();
-								LVITEMA inf{};
-								inf.mask = LVIF_STATE;
-								inf.stateMask = inf.state = LVIS_SELECTED;
-								inf.iItem = id_go;
-								ListView_SetItem(cat.wnd_list, &inf);
+								cat.on_main_restore();
+								cat.on_list_sel(id_go);
 								SetFocus(cat.wnd_list);
 								return 0;
 							}
 						} // switch
 					}
 				}
-			}
+			} // switch id_c
 			break;
-		}
+		} // switch code
 		break;
 	case WM_SIZE:
 		{
 			app & cat = app::instance();
 			RECT rc;
 			GetClientRect(cat.wnd_main, &rc);
-			t_name::resize(cat.dlu, rc, cat.wnd_name);
-			t_value::resize(cat.dlu, rc, cat.wnd_value);
-			t_list::resize(cat.dlu, rc, cat.wnd_list);
-			/*cat.ui_list_rect(rc);
-			MoveWindow(cat.wnd_list, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, TRUE);*/
+			t_name::resize(&cat, rc);
+			t_clear::resize(&cat, rc);
+			t_value::resize(&cat, rc);
+			t_list::resize(&cat, rc);
 		}
 		return 0;
 	case WM_USER:
@@ -205,8 +340,9 @@ LRESULT CALLBACK app::proc_main(HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_pa
 						BOOL vis = IsWindowVisible(cat.wnd_main);
 						if( !vis ) ShowWindow(cat.wnd_main, SW_SHOWMINIMIZED);
 						SetForegroundWindow(cat.wnd_main);
+						cat.make_menu_only();
 						TrackPopupMenuEx(
-							cat.menu_main,
+							cat.menu_tray,
 							TPM_LEFTALIGN | TPM_BOTTOMALIGN | TPM_LEFTBUTTON,
 							pt.x, pt.y,
 							cat.wnd_main,
@@ -225,7 +361,7 @@ LRESULT CALLBACK app::proc_main(HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_pa
 						ShowWindow(cat.wnd_main, mn ? restore : SW_HIDE);
 						if( mn ) SetForegroundWindow(cat.wnd_main);
 					} else {
-						cat.ui_main_restore();
+						cat.on_main_restore();
 					}
 				}
 				return 0;

@@ -24,6 +24,7 @@ inline std::basic_ostream<C2, T2> & operator << (
 
 #include <tchar.h>
 #include <windows.h>
+#include <windowsx.h>
 #include <commctrl.h>
 #include <strsafe.h>
 
@@ -118,35 +119,63 @@ struct omg {
 	int x, y, w, h;
 };
 
-template <hold_text Class, WORD Id, DWORD Style, int X, int Y, int W, int H>
-struct is_window {
-	static inline omg init(const t_dlu_base & dlu, const RECT & rc) {
-		const int x = dlu.pixel_x(X), y = dlu.pixel_y(Y);
-		int w, h;
-		if constexpr( W > 0 ) { w = dlu.pixel_x(W); } else { w = rc.right - x - dlu.pixel_x(- W); }
-		if constexpr( H > 0 ) { h = dlu.pixel_y(H); } else { h = rc.bottom - y - dlu.pixel_y(- H); }
-		return {x, y, w, h};
-	}
+template <class T>
+struct is_window_host {
+	using h_member = HWND T::*;
 
-	static HWND create(const t_dlu_base & dlu, const RECT & rc, LPCTSTR title, HWND parent, HINSTANCE h_inst) {
-		omg pos = init(dlu, rc);
-		return CreateWindow(
-			Class.s_, // wnd_class
-			title, // title
-			Style, // style
-			pos.x, pos.y, // pos
-			pos.w, pos.h, // size
-			parent, // parent
-			(HMENU) Id, // menu or id
-			h_inst, // instance handler
-			NULL // no creation data
-		);
-	}
+	template <h_member Member>
+	struct base_is_window {
+		static omg & pos_instance() {
+			static omg ret;
+			return ret;
+		}
+	};
 
-	static BOOL resize(const t_dlu_base & dlu, const RECT & rc, HWND wnd) {
-		omg pos = init(dlu, rc);
-		return MoveWindow(wnd, pos.x, pos.y, pos.w, pos.h, TRUE);
-	}
+	template <h_member Member, hold_text Class, WORD Id, DWORD Style, int X, int Y, int W, int H>
+	struct is_window : public base_is_window<Member> {
+		using base = base_is_window<Member>;
+
+		static void calc_position(const t_dlu_base & dlu) {
+			omg & pos = base::pos_instance();
+			if constexpr( X < 0 ) { pos.x = dlu.pixel_x(- X); } else { pos.x = dlu.pixel_x(X); }
+			if constexpr( Y < 0 ) { pos.y = dlu.pixel_y(- Y); } else { pos.y = dlu.pixel_y(Y); }
+			if constexpr( W < 0 ) { pos.w = dlu.pixel_x(- W); } else { pos.w = dlu.pixel_x(W); }
+			if constexpr( H < 0 ) { pos.h = dlu.pixel_y(- H); } else { pos.h = dlu.pixel_y(H); }
+		}
+
+		static inline omg init(const RECT & rc) {
+			omg pos = base::pos_instance();
+			if constexpr( X < 0 ) { pos.x = rc.right - pos.x; }
+			if constexpr( Y < 0 ) { pos.y = rc.bottom - pos.y; }
+			if constexpr( W < 0 ) { pos.w = rc.right - pos.x - pos.w; }
+			if constexpr( H < 0 ) { pos.h = rc.bottom - pos.y - pos.h; }
+			return pos;
+		}
+
+		static HWND create(T * obj, const RECT & rc, LPCTSTR title, HWND parent, HINSTANCE h_inst, HFONT font = NULL) {
+			calc_position(obj->dlu);
+			omg pos = init(rc);
+			HWND ret = obj->*Member = CreateWindow(
+				Class.s_, // wnd_class
+				title, // title
+				Style, // style
+				pos.x, pos.y, // pos
+				pos.w, pos.h, // size
+				parent, // parent
+				(HMENU) Id, // menu or id
+				h_inst, // instance handler
+				NULL // no creation data
+			);
+			if( ret && font ) SendMessage(ret, WM_SETFONT, (WPARAM) font, FALSE);
+			return ret;
+		}
+
+		static BOOL resize(T * obj, const RECT & rc) {
+			omg pos = init(rc);
+			return MoveWindow(obj->*Member, pos.x, pos.y, pos.w, pos.h, TRUE);
+		}
+	};
+
 };
 
 namespace fs = std::filesystem;
@@ -159,7 +188,7 @@ data_dir		[] = _T("dt_copycat"),
 wnd_class_name	[] = _T("copycat_main");
 constexpr wchar_t
 tx_edit			[] = L"\U0001F589",
-tx_exit			[] = L"\U0001F5F6";
+tx_clear		[] = L"\U0001F5F6";
 
 using text = ex::basic_text<TCHAR>;
 
@@ -221,6 +250,8 @@ struct t_data {
 		void make_combined() {
 			combined = is_value_hidden ? name : ex::actions_text::implode({name, value}, _T("\t") );
 		}
+
+		bool is_valid() const { return static_cast<bool>(name) && static_cast<bool>(value); }
 
 		operator bool () const { return is_visible; }
 
@@ -299,7 +330,14 @@ struct t_data {
 	}
 };
 
-struct app {
+struct base_app {
+	t_dlu_base dlu;
+	HWND wnd_main, wnd_name_label, wnd_name, wnd_clear, wnd_value_hidden, wnd_value, wnd_set, wnd_add, wnd_del, wnd_list;
+
+	base_app() : dlu(n_not_init::val) {}
+};
+
+struct app : public base_app, public is_window_host<base_app> {
 	static app & instance() { static app ret; return ret; }
 	static fs::path get_data_path() {
 		fs::path ret;
@@ -315,79 +353,88 @@ struct app {
 	}
 
 	enum n_id : WORD {
-		id_exit = 3, id_edit, id_add, id_tray,
-		id_name_label, id_name, id_value_hidden, id_value, id_list,
+		id_exit = 10, id_edit, id_tray, id_about, id_save, id_load,
+		id_name_label, id_name, id_clear, id_value_hidden, id_value, id_add, id_del, id_set, id_list,
 		id_first = 100, id_step = 10
 	};
 	enum n_ui : int {
 		ui_left = dlu_space_margin_x,
-		ui_top_name_label = dlu_space_margin_y,
-		ui_top_name = ui_top_name_label + dlu_label_y + dlu_space_label_near_y,
+		ui_width = dlu_button_x,
+		ui_width_2 = dlu_edit_y,
+		ui_right = ui_left + ui_width_2,
+		ui_right_2 = ui_right + dlu_space_related_x,
+		ui_left_2 = ui_left + ui_width + dlu_space_related_x,
+		//ui_left_3 = (ui_left_2 - dlu_button_x) / 2,
+		ui_top_name = dlu_space_margin_y, // + dlu_label_y + dlu_space_label_near_y,
+		ui_top_name_label = ui_top_name + (dlu_edit_y - dlu_label_y) / 2,
 		ui_top_value_hidden = ui_top_name + dlu_edit_y + dlu_space_related_y,
-		ui_top_value = ui_top_value_hidden + dlu_check_y + dlu_space_label_near_y,
-		ui_height_value = 50,
-		ui_top_list = ui_top_value + ui_height_value + dlu_space_related_y
+		ui_top_value = ui_top_value_hidden, // + dlu_check_y + dlu_space_label_near_y,
+		ui_height_value = 70,
+		ui_bottom_value = ui_top_value + ui_height_value,
+		ui_top_del = ui_bottom_value - dlu_button_y,
+		ui_top_add = ui_top_del - dlu_space_related_y - dlu_button_y,
+		ui_top_set = ui_top_add - dlu_space_related_y - dlu_button_y,
+		ui_top_list = ui_bottom_value + dlu_space_related_y
 	};
 
-	using t_name_label = is_window<WC_STATIC, id_name_label,
+	using t_name_label = is_window<&base_app::wnd_name_label, WC_STATIC, id_name_label,
 		WS_VISIBLE | WS_CHILD |
-		SS_LEFTNOWORDWRAP | SS_NOTIFY,
-		ui_left, ui_top_name_label, dlu_button_x * 2, dlu_label_y
+		SS_NOTIFY, // SS_LEFTNOWORDWRAP SS_RIGHT
+		ui_left, ui_top_name_label, ui_width, dlu_label_y
 	>;
-	using t_name = is_window<WC_EDIT, id_name,
+	using t_name = is_window<&base_app::wnd_name, WC_EDIT, id_name,
 		WS_VISIBLE | WS_CHILD | WS_BORDER | WS_TABSTOP |
-		ES_LEFT,
-		ui_left, ui_top_name, - dlu_space_margin_x, dlu_edit_y
+		ES_LEFT, // ES_NOHIDESEL ES_CENTER
+		ui_left_2, ui_top_name, - ui_right_2, dlu_edit_y
 	>;
-	using t_value_hidden = is_window<WC_BUTTON, id_value_hidden,
+	using t_clear = is_window<&base_app::wnd_clear, WC_BUTTON, id_clear,
+		WS_TABSTOP | WS_VISIBLE | WS_CHILD |
+		BS_PUSHBUTTON,
+		- ui_right, ui_top_name, ui_width_2, dlu_edit_y
+	>;
+	using t_value_hidden = is_window<&base_app::wnd_value_hidden, WC_BUTTON, id_value_hidden,
 		WS_VISIBLE | WS_CHILD | WS_TABSTOP |
-		BS_AUTOCHECKBOX | BS_TEXT,
-		ui_left, ui_top_value_hidden, dlu_button_x * 2, dlu_check_y
+		BS_AUTOCHECKBOX | BS_TEXT | BS_RIGHTBUTTON | BS_TOP, // BS_PUSHLIKE BS_RIGHT
+		ui_left, ui_top_value_hidden, ui_width, dlu_button_y
 	>;
-	using t_value = is_window<WC_EDIT, id_value,
+	using t_value = is_window<&base_app::wnd_value, WC_EDIT, id_value,
 		WS_VISIBLE | WS_CHILD | WS_BORDER | WS_TABSTOP |
 		ES_LEFT | ES_MULTILINE | ES_WANTRETURN,
-		ui_left, ui_top_value, - dlu_space_margin_x, ui_height_value
+		ui_left_2, ui_top_value, - ui_left, ui_height_value
 	>;
-	using t_list = is_window<WC_LISTVIEW, id_list,
+	using t_set = is_window<&base_app::wnd_set, WC_BUTTON, id_set,
+		WS_TABSTOP | WS_VISIBLE | WS_CHILD |
+		BS_PUSHBUTTON,
+		ui_left, ui_top_set, ui_width, dlu_button_y
+	>;
+	using t_add = is_window<&base_app::wnd_add, WC_BUTTON, id_add,
+		WS_TABSTOP | WS_VISIBLE | WS_CHILD |
+		BS_PUSHBUTTON,
+		ui_left, ui_top_add, ui_width, dlu_button_y
+	>;
+	using t_del = is_window<&base_app::wnd_del, WC_BUTTON, id_del,
+		WS_TABSTOP | WS_VISIBLE | WS_CHILD |
+		BS_PUSHBUTTON,
+		ui_left, ui_top_del, ui_width, dlu_button_y
+	>;
+	using t_list = is_window<&base_app::wnd_list, WC_LISTVIEW, id_list,
 		WS_TABSTOP | WS_VISIBLE | WS_CHILD | WS_BORDER |
 		LVS_REPORT | LVS_EDITLABELS | LVS_NOSORTHEADER | LVS_SHOWSELALWAYS | LVS_SINGLESEL,
 		dlu_space_smallest_x, ui_top_list, - dlu_space_smallest_x, - dlu_space_smallest_y
 	>;
 
 	t_data data;
-	t_dlu dlu;
-	HWND wnd_main, wnd_name_label, wnd_name, wnd_value_hidden, wnd_value, wnd_list;
-	HMENU menu_main = NULL;
+	HWND wnd_main;
+	HMENU menu_main, menu_tray = NULL;
+	bool is_list_ready = false, is_data_changed = false;
+	int current = -1;
 
-	app() : dlu(n_not_init::val) {}
-	~app() {
-		if( menu_main ) DestroyMenu(menu_main);
-	}
+	~app() { if( menu_tray ) DestroyMenu(menu_tray); }
 
-	void ui_create(HINSTANCE h_inst) {
+	void on_create(HINSTANCE h_inst) {
 		RECT rc;
 		GetClientRect(wnd_main, &rc);
-
-		wnd_name_label		= t_name_label::create(dlu, rc, _T("&Name"), wnd_main, h_inst);
-		wnd_name			= t_name::create(dlu, rc, empty_str, wnd_main, h_inst);
-		wnd_value_hidden	= t_value_hidden::create(dlu, rc, _T("&Hide value"), wnd_main, h_inst);
-		wnd_value			= t_value::create(dlu, rc, empty_str, wnd_main, h_inst);
-
-		/*cat.wnd_exit = CreateWindow(
-			WC_BUTTON, // wnd_class
-			tx_exit, // title
-			WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON, // style
-			dlu.space_margin_x, dlu.space_margin_y, // pos
-			dlu.button_x, dlu.button_y, // size
-			cat.wnd_main, // parent
-			(HMENU) id_exit, // menu or id
-			h_inst, // instance handler
-			NULL // no creation data
-		);*/
-
-		// list
-		wnd_list = t_list::create(dlu, rc, empty_str, wnd_main, h_inst);
+		t_list::create(this, rc, empty_str, wnd_main, h_inst);
 		ListView_SetExtendedListViewStyle(wnd_list,
 			//LVS_EX_AUTOCHECKSELECT |
 			LVS_EX_CHECKBOXES | LVS_EX_FULLROWSELECT | LVS_EX_ONECLICKACTIVATE | LVS_EX_DOUBLEBUFFER //| LVS_EX_AUTOSIZECOLUMNS
@@ -402,13 +449,58 @@ struct app {
 			col.pszText = _T("Value");
 			ListView_InsertColumn(wnd_list, 1, &col);
 		}
+		HFONT font = (HFONT) SendMessage(wnd_list, WM_GETFONT, 0, 0);
+		//
+		{
+			HDC hdc = GetDC(wnd_list);
+			SelectObject(hdc, font);
+			TEXTMETRIC m;
+			GetTextMetrics(hdc, &m);
+			ReleaseDC(wnd_list, hdc);
+			dlu.rescale(m.tmAveCharWidth, m.tmHeight);
+		}
+		t_list::calc_position(dlu);
+		t_list::resize(this, rc);
+		t_name_label::create(this, rc, _T("&Name"), wnd_main, h_inst, font);
+		t_name::create(this, rc, empty_str, wnd_main, h_inst, font);
+		t_clear::create(this, rc, _T("&X"), wnd_main, h_inst, font);
+		t_value_hidden::create(this, rc, _T("&Hide value"), wnd_main, h_inst, font);
+		t_value::create(this, rc, empty_str, wnd_main, h_inst, font);
+		t_set::create(this, rc, _T("&Set"), wnd_main, h_inst, font);
+		t_add::create(this, rc, _T("&Add"), wnd_main, h_inst, font);
+		t_del::create(this, rc, _T("&Del"), wnd_main, h_inst, font);
+	}
+
+	bool make_menu_only() {
+		if( !is_data_changed ) return true;
+		if( menu_tray ) DestroyMenu(menu_tray);
+		if(( menu_tray = CreatePopupMenu() )) {
+			AppendMenu(menu_tray, MF_ENABLED | MF_STRING, id_exit, _T("&quit") );
+			AppendMenu(menu_tray, MF_SEPARATOR, 0, NULL);
+			UINT_PTR pos = id_first;
+			for( const t_data::t_item & it : data.items ) {
+				if( it ) {
+					AppendMenu(menu_tray, MF_ENABLED | MF_STRING, pos, it.combined->cs_);
+				}
+				pos += 10;
+			}
+			AppendMenu(menu_tray, MF_ENABLED | MF_STRING | MF_MENUBREAK, id_edit, _T("&edit") );
+			AppendMenu(menu_tray, MF_SEPARATOR, 0, NULL);
+			pos = id_first +1;
+			for( const t_data::t_item & it : data.items ) {
+				if( it ) AppendMenu(menu_tray, MF_ENABLED | MF_STRING, pos, _T("&edit") );
+				pos += 10;
+			}
+			is_data_changed = false;
+		}
+		return menu_tray;
 	}
 
 	bool make_menu() {
-		if( menu_main ) DestroyMenu(menu_main);
-		if(( menu_main = CreatePopupMenu() )) {
-			AppendMenu(menu_main, MF_ENABLED | MF_STRING, id_exit, _T("&quit") );
-			AppendMenu(menu_main, MF_SEPARATOR, 0, NULL);
+		if( menu_tray ) DestroyMenu(menu_tray);
+		if(( menu_tray = CreatePopupMenu() )) {
+			AppendMenu(menu_tray, MF_ENABLED | MF_STRING, id_exit, _T("&quit") );
+			AppendMenu(menu_tray, MF_SEPARATOR, 0, NULL);
 			TCHAR none[] = _T("");
 			LVITEM inf{};
 			inf.mask = LVIF_DI_SETITEM | LVIF_TEXT; // LVIF_STATE
@@ -425,36 +517,141 @@ struct app {
 				}
 				if( it ) {
 					ListView_SetCheckState(wnd_list, inf.iItem, TRUE);
-					AppendMenu(menu_main, MF_ENABLED | MF_STRING, pos, it.combined->cs_);
+					AppendMenu(menu_tray, MF_ENABLED | MF_STRING, pos, it.combined->cs_);
 				}
 				pos += 10;
 				++inf.iItem;
 			}
-			AppendMenu(menu_main, MF_ENABLED | MF_STRING | MF_MENUBREAK, id_edit, _T("&edit") );
-			AppendMenu(menu_main, MF_SEPARATOR, 0, NULL);
+			AppendMenu(menu_tray, MF_ENABLED | MF_STRING | MF_MENUBREAK, id_edit, _T("&edit") );
+			AppendMenu(menu_tray, MF_SEPARATOR, 0, NULL);
 			pos = id_first +1;
 			for( const t_data::t_item & it : data.items ) {
-				if( it ) AppendMenu(menu_main, MF_ENABLED | MF_STRING, pos, _T("&edit") );
+				if( it ) AppendMenu(menu_tray, MF_ENABLED | MF_STRING, pos, _T("&edit") );
 				pos += 10;
 			}
 		}
-		return menu_main;
+		return menu_tray;
 	}
 
 	static LRESULT CALLBACK proc_main(HWND, UINT, WPARAM, LPARAM);
 
-	/*void ui_list_rect(RECT & rc) const {
-		GetClientRect(wnd_main, &rc);
-		rc.left += dlu.space_smallest_x;
-		rc.top += dlu.pixel_y(ui_top_list);
-		rc.right -= dlu.space_smallest_x;
-		rc.bottom -= dlu.space_smallest_y;
-	}*/
-
-	void ui_main_restore() const {
+	void on_main_restore() const {
 		ShowWindow(wnd_main, SW_SHOW);
 		const int restore = IsZoomed(wnd_main) ? SW_SHOWMAXIMIZED : SW_RESTORE;
 		ShowWindow(wnd_main, restore);
 		SetForegroundWindow(wnd_main);
+	}
+
+	void on_list_get(int n) {
+		if( !is_list_ready ) return;
+		current = n;
+		t_data::t_item & item = data.items[n];
+		SetWindowText(wnd_name, item.name->cs_);
+		SetWindowText(wnd_value, item.value->cs_);
+		Button_SetCheck(wnd_value_hidden, item.is_value_hidden ? BST_CHECKED : BST_UNCHECKED);
+	}
+
+	static text get_text(HWND wnd) {
+		if( ex::id len = GetWindowTextLength(wnd) ) {
+			TCHAR * s;
+			text ret(ex::n_from_new::val, s = new TCHAR[len +1], len);
+			if( GetWindowText(wnd, s, len +1) ) {
+				ret.calc_len();
+				return ret;
+			}
+		}
+		return text::inst_empty();
+	}
+
+	void on_list_check(int pos) {
+		if( !is_list_ready ) return;
+		t_data::t_item & item = data.items[pos];
+		item.is_visible = ListView_GetCheckState(wnd_list, pos);
+		is_data_changed = true;
+	}
+
+	void on_list_sel(int pos) {
+		LVITEMA inf{};
+		inf.mask = LVIF_STATE;
+		inf.stateMask = inf.state = LVIS_SELECTED;
+		inf.iItem = pos;
+		ListView_SetItem(wnd_list, &inf);
+	}
+
+	void on_list_del() {
+		if( !data.items.size() || current < 0 ) return;
+		is_list_ready = false;
+		data.items.erase(data.items.begin() + current);
+		ListView_DeleteItem(wnd_list, current);
+		current = -1;
+		is_list_ready = true;
+		is_data_changed = true;
+	}
+
+	void on_list_add() {
+		int pos = data.items.size();
+		t_data::t_item item;
+		item.name = ex::actions_text::trim( get_text(wnd_name) );
+		item.value = ex::actions_text::trim( get_text(wnd_value) );
+		SetWindowText(wnd_name, item.name->cs_);
+		SetWindowText(wnd_value, item.value->cs_);
+		if( item.is_valid() ) {
+			is_list_ready = false;
+			item.is_value_hidden = (Button_GetCheck(wnd_value_hidden) == BST_CHECKED);
+			item.make_combined();
+			data.items.push_back(item);
+			//
+			TCHAR none[] = _T("");
+			LVITEM inf{};
+			inf.mask = LVIF_DI_SETITEM | LVIF_TEXT; // LVIF_STATE
+			inf.iItem = pos;
+			inf.iSubItem = 0;
+			inf.pszText = item.name->s_ ? item.name->s_ : none;
+			ListView_InsertItem(wnd_list, &inf);
+			//
+			inf.iSubItem = 1;
+			inf.pszText = (!item.is_value_hidden && item.value->s_) ? item.value->s_ : none;
+			ListView_SetItem(wnd_list, &inf);
+			//
+			ListView_SetCheckState(wnd_list, inf.iItem, TRUE);
+			on_list_sel(pos);
+			current = pos;
+			is_list_ready = true;
+			is_data_changed = true;
+		}
+	}
+
+	void on_list_set() {
+		if( current < 0 ) return;
+		t_data::t_item item;
+		item.name = ex::actions_text::trim( get_text(wnd_name) );
+		item.value = ex::actions_text::trim( get_text(wnd_value) );
+		SetWindowText(wnd_name, item.name->cs_);
+		SetWindowText(wnd_value, item.value->cs_);
+		if( item.is_valid() ) {
+			is_list_ready = false;
+			t_data::t_item & cur_item = data.items[current];
+			item.is_visible = cur_item.is_visible;
+			item.is_value_hidden = (Button_GetCheck(wnd_value_hidden) == BST_CHECKED);
+			item.make_combined();
+			cur_item = item;
+			//
+			TCHAR none[] = _T("");
+			/*LVITEM inf{};
+			inf.mask = LVIF_DI_SETITEM | LVIF_TEXT; // LVIF_STATE
+			inf.iItem = current;
+			inf.iSubItem = 0;
+			inf.pszText = item.name->s_ ? item.name->s_ : none;
+			ListView_SetItem(wnd_list, &inf);
+			//
+			inf.iSubItem = 1;
+			inf.pszText = (!item.is_value_hidden && item.value->s_) ? item.value->s_ : none;
+			ListView_SetItem(wnd_list, &inf);*/
+			ListView_SetItemText(wnd_list, current, 0, item.name->s_ ? item.name->s_ : none);
+			ListView_SetItemText(wnd_list, current, 1, item.is_value_hidden || !item.value->s_ ? none : item.value->s_);
+			//
+			is_list_ready = true;
+			is_data_changed = true;
+		}
 	}
 };
