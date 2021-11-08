@@ -195,23 +195,21 @@ using text = ex::basic_text<TCHAR>;
 namespace detail {
 
 template <class To, class From> struct wrap;
-template <class Same> struct wrap<Same, Same> {
+
+/*template <class Same> struct wrap<Same, Same> {
 	using result = ex::basic_text<Same>;
 
-	template <class Traits, class Allocator>
-	static result conv(const std::basic_string<Same, Traits, Allocator> & str) {
-		return result(ex::n_from_string::val, str);
+	static result conv(const Same * src, ex::id src_len) {
+		return result::inst_empty();
 	}
-};
+};*/
 
 template <> struct wrap<wchar_t, char> {
 	using result = ex::basic_text<wchar_t>;
 
-	template <class Traits, class Allocator>
-	static result conv(const std::basic_string<char, Traits, Allocator> & str) {
+	static result conv(const char * src, ex::id src_len) {
 		result ret;
-		const char * src = str.c_str();
-		if( std::size_t src_len = str.size(); int len = MultiByteToWideChar(CP_UTF8, 0, src, src_len, nullptr, 0) ) {
+		if( int len = MultiByteToWideChar(CP_UTF8, 0, src, src_len, nullptr, 0) ) {
 			wchar_t * s;
 			ret = result(ex::n_from_new::val, s = new wchar_t[len +1], len);
 			len = MultiByteToWideChar(CP_UTF8, 0, src, src_len, s, len);
@@ -225,11 +223,9 @@ template <> struct wrap<wchar_t, char> {
 template <> struct wrap<char, wchar_t> {
 	using result = ex::basic_text<char>;
 
-	template <class Traits, class Allocator>
-	result conv(const std::basic_string<wchar_t, Traits, Allocator> & str) {
+	static result conv(const wchar_t * src, ex::id src_len) {
 		result ret;
-		const wchar_t * src = str.c_str();
-		if( std::size_t src_len = str.size(); int len = WideCharToMultiByte(CP_UTF8, 0, src, src_len, NULL, 0, NULL, NULL) ) {
+		if( int len = WideCharToMultiByte(CP_UTF8, 0, src, src_len, NULL, 0, NULL, NULL) ) {
 			char * s;
 			ret = result(ex::n_from_new::val, s = new char[len +1], len);
 			len = WideCharToMultiByte(CP_UTF8, 0, src, src_len, s, len, NULL, NULL);
@@ -241,6 +237,29 @@ template <> struct wrap<char, wchar_t> {
 };
 
 } // ns: detail
+
+template <class To>
+struct wrap {
+	using result = ex::basic_text<To>;
+
+	template <class From, class Traits, class Allocator>
+	static result conv(const std::basic_string<From, Traits, Allocator> & str) {
+		if constexpr( std::is_same_v<To, From> ) {
+			return result(ex::n_from_string::val, str);
+		} else {
+			return detail::wrap<To, From>::conv(str.c_str(), str.size() );
+		}
+	}
+
+	template <class From>
+	static result conv(const ex::basic_text<From> & tx) {
+		if constexpr( std::is_same_v<To, From> ) {
+			return tx;
+		} else {
+			return detail::wrap<To, From>::conv(tx->cs_, tx->len_);
+		}
+	}
+};
 
 struct t_data {
 	struct t_item {
@@ -286,30 +305,34 @@ struct t_data {
 	};
 
 	using t_in = std::basic_ifstream<char>;
+	using t_out = std::basic_ofstream<char>;
 	using t_string = std::basic_string<char>;
+	using t_text = ex::basic_text<char>;
 	using t_items = std::vector<t_item>;
 
 	t_items items;
 	fs::path path;
 
-	bool read() {
-		//
-		{
-			std::error_code ec;
-			fs::file_status status = fs::status(path, ec);
-			if( ec ) {
-				log(L"error: Checking config fail");
-				return false;
-			}
-			if( status.type() == fs::file_type::not_found ) {
-				log("log: Config is absent");
-				return false;
-			}
-			if( status.type() != fs::file_type::regular ) {
-				log(L"error: Config should be regular file");
-				return false;
-			}
+	bool check() const {
+		std::error_code ec;
+		fs::file_status status = fs::status(path, ec);
+		if( ec ) {
+			log(L"error: Checking config fail");
+			return false;
 		}
+		if( status.type() == fs::file_type::not_found ) {
+			log("log: Config is absent");
+			return false;
+		}
+		if( status.type() != fs::file_type::regular ) {
+			log(L"error: Config should be regular file");
+			return false;
+		}
+		return true;
+	}
+
+	bool read() {
+		if( !check() ) return false;
 		t_in in;
 		in.open(path, std::ios_base::binary);
 		if( !in.is_open() ) {
@@ -322,9 +345,27 @@ struct t_data {
 			items.emplace_back(
 				flags.size() >= 1 && flags[0] == '1',
 				flags.size() >= 2 && flags[1] == '1',
-				detail::wrap<TCHAR, char>::conv(name),
-				detail::wrap<TCHAR, char>::conv(value)
+				wrap<TCHAR>::conv(name),
+				ex::actions_text::escape_back( wrap<TCHAR>::conv(value) )
 			).make_combined();
+		}
+		return true;
+	}
+
+	bool write() const {
+		if( !check() ) return false;
+		t_out out;
+		out.open(path, std::ios_base::binary);
+		if( !out.is_open() ) {
+			log(L"error: Unable to open config for reading");
+			return false;
+		}
+		t_text name, value;
+		for( const t_item & it : items ) {
+			name = wrap<char>::conv(it.name);
+			value = ex::actions_text::escape( wrap<char>::conv(it.value) );
+			out << name << '\n' << value << '\n' <<
+			(it.is_visible ? '1' : '0') << (it.is_value_hidden ? '1' : '0') << '\n';
 		}
 		return true;
 	}

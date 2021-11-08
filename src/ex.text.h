@@ -16,7 +16,9 @@ struct traits_text<wchar_t> {
 
 	static constexpr type
 	v_empty[] = L"",
-	v_space[] = L" \f\n\r\t\v";
+	v_space[] = L" \f\n\r\t\v",
+	v_escape[] = L"\\\n\r", // should start with slash
+	v_escape_to[] = L"\\nr";
 
 	inline static id length(const_pointer cs) {
 		return std::wcslen(cs);
@@ -24,6 +26,10 @@ struct traits_text<wchar_t> {
 
 	inline static id spn(const_pointer dest, const_pointer src) {
 		return std::wcsspn(dest, src);
+	}
+
+	inline static id cspn(const_pointer dest, const_pointer src) {
+		return std::wcscspn(dest, src);
 	}
 
 	inline static const_pointer chr(const_pointer str, type ch) {
@@ -48,7 +54,9 @@ struct traits_text<char> {
 
 	static constexpr type
 	v_empty[] = "",
-	v_space[] = " \f\n\r\t\v";
+	v_space[] = " \f\n\r\t\v",
+	v_escape[] = "\\\n\r", // should start with slash
+	v_escape_to[] = "\\nr";
 
 	inline static id length(const_pointer cs) {
 		return std::strlen(cs);
@@ -56,6 +64,10 @@ struct traits_text<char> {
 
 	inline static id spn(const_pointer dest, const_pointer src) {
 		return std::strspn(dest, src);
+	}
+
+	inline static id cspn(const_pointer dest, const_pointer src) {
+		return std::strcspn(dest, src);
 	}
 
 	inline static const_pointer chr(const_pointer str, type ch) {
@@ -222,6 +234,99 @@ struct actions_text {
 			--cs_end, --len
 		);
 		return result(n_copy::val, cs, len);
+	}
+
+	template <class C, template <class C1> class T>
+	static basic_text<C, T> escape(const basic_text<C, T> & tx) {
+		using result = basic_text<C, T>;
+		using traits = typename result::traits;
+		using const_pointer = typename result::const_pointer;
+		using pointer = typename result::pointer;
+		if( !tx ) return tx;
+		const_pointer cs = tx->cs_, cs_end = tx->cs_ + tx->len_;
+		id skip, count = 0;
+		// prepare
+		do {
+			skip = traits::cspn(cs, traits::v_escape);
+			cs += skip;
+			if( cs == cs_end ) break;
+			skip = traits::spn(cs, traits::v_escape);
+			count += skip;
+			cs += skip;
+		} while( cs < cs_end );
+		if( !count ) return tx;
+		// perform
+		id len = tx->len_ + count;
+		pointer s;
+		const_pointer found;
+		result ret(n_from_new::val, s = new C[len +1], len);
+		cs = tx->cs_;
+		do {
+			if(( skip = traits::cspn(cs, traits::v_escape) )) {
+				traits::copy_n(s, cs, skip);
+				s += skip;
+				cs += skip;
+			}
+			if( cs == cs_end ) break;
+			found = traits::chr(traits::v_escape, *cs);
+			do {
+				*s = *traits::v_escape;
+				++s;
+				*s = traits::v_escape_to[found - traits::v_escape];
+				++s;
+				++cs;
+			} while( cs < cs_end && (found = traits::chr(traits::v_escape, *cs) ) );
+		} while( cs < cs_end );
+		*s = 0;
+		return ret;
+	}
+
+	template <class C, template <class C1> class T>
+	static basic_text<C, T> escape_back(const basic_text<C, T> & tx) {
+		using result = basic_text<C, T>;
+		using traits = typename result::traits;
+		using const_pointer = typename result::const_pointer;
+		using pointer = typename result::pointer;
+		if( !tx ) return tx;
+		const_pointer cs = tx->cs_, cs_end = tx->cs_ + tx->len_, found;
+		id count = 0;
+		// prepare
+		do {
+			if( !(cs = traits::chr(cs, *traits::v_escape) ) ) break;
+			++cs;
+			if( cs == cs_end ) break;
+			if(( found = traits::chr(traits::v_escape_to, *cs) )) ++count;
+			++cs;
+		} while( cs < cs_end );
+		if( !count ) return tx;
+		// perform
+		id len = tx->len_ - count, skip;
+		pointer s;
+		const_pointer cs_skip;
+		result ret(n_from_new::val, s = new C[len +1], len);
+		cs = tx->cs_;
+		cs_skip = traits::chr(cs, *traits::v_escape);
+		do {
+			if( cs_skip +1 == cs_end ) break;
+			if(( found = traits::chr(traits::v_escape_to, cs_skip[1]) )) {
+				skip = cs_skip - cs;
+				traits::copy_n(s, cs, skip);
+				s += skip;
+				*s = traits::v_escape[found - traits::v_escape_to];
+				++s;
+				cs = cs_skip += 2;
+			} else {
+				cs_skip += 2;
+			}
+			if( cs_skip == cs_end ) break;
+		} while(( cs_skip = traits::chr(cs_skip, *traits::v_escape) ));
+		if( cs < cs_end ) {
+			skip = cs_end - cs;
+			traits::copy_n(s, cs, skip);
+			s += skip;
+		}
+		*s = 0;
+		return ret;
 	}
 };
 

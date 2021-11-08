@@ -129,6 +129,9 @@ INT WINAPI WinMain(HINSTANCE h_inst, HINSTANCE h_inst_prev, PSTR args, INT cmd_s
 		}
 	}
 
+	// write config
+	cat.data.write();
+
 	// tray icon done
 	Shell_NotifyIcon(NIM_DELETE, &nid);
 
@@ -253,6 +256,12 @@ LRESULT CALLBACK app::proc_main(HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_pa
 					cat.data.read();
 					cat.make_menu();
 					cat.is_list_ready = true;
+				}
+				return 0;
+			case id_save:
+				{
+					app & cat = app::instance();
+					cat.data.write();
 				}
 				return 0;
 			case id_edit:
