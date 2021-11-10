@@ -87,7 +87,7 @@ struct t_dlu_base {
 	type base_x, base_y;
 };
 
-struct t_dlu : public t_dlu_base {
+/*struct t_dlu : public t_dlu_base {
 	// construct
 	t_dlu(both units = GetDialogBaseUnits() ) : t_dlu( LOWORD(units), HIWORD(units) ) {}
 	t_dlu(type bx, type by) : t_dlu_base(bx, by), M_DLU_MEMBERS(M_DLU_INIT, M_DLU_ALIAS_INIT) {}
@@ -102,7 +102,7 @@ struct t_dlu : public t_dlu_base {
 
 	// data
 	type M_DLU_MEMBERS(M_DLU_DATA, M_DLU_DATA);
-};
+};*/
 
 template <class T, ex::uid N>
 struct hold_text {
@@ -185,7 +185,8 @@ empty_str		[] = _T(""),
 env_data		[] = _T("AppData"),
 appname			[] = _T("copycat"),
 data_dir		[] = _T("dt_copycat"),
-wnd_class_name	[] = _T("copycat_main");
+wnd_class_name	[] = _T("copycat_main"),
+wnd_class_aux	[] = _T("copycat_aux");
 constexpr wchar_t
 tx_edit			[] = L"\U0001F589",
 tx_clear		[] = L"\U0001F5F6";
@@ -465,10 +466,13 @@ struct app : public base_app, public is_window_host<base_app> {
 	>;
 
 	t_data data;
-	HWND wnd_main;
+	HWND wnd_main, wnd_aux;
 	HMENU menu_main, menu_tray = NULL;
 	bool is_list_ready = false, is_data_changed = false;
 	int current = -1;
+
+	static LRESULT CALLBACK proc_main(HWND, UINT, WPARAM, LPARAM);
+	static LRESULT CALLBACK proc_aux(HWND, UINT, WPARAM, LPARAM);
 
 	~app() { if( menu_tray ) DestroyMenu(menu_tray); }
 
@@ -574,7 +578,21 @@ struct app : public base_app, public is_window_host<base_app> {
 		return menu_tray;
 	}
 
-	static LRESULT CALLBACK proc_main(HWND, UINT, WPARAM, LPARAM);
+	void on_show_tray_menu() {
+		if( POINT pt; GetCursorPos(&pt) ) {
+			make_menu_only();
+			ShowWindow(wnd_aux, SW_SHOWNORMAL);
+			SetForegroundWindow(wnd_aux);
+			TrackPopupMenuEx(
+				menu_tray,
+				TPM_LEFTALIGN | TPM_BOTTOMALIGN | TPM_LEFTBUTTON,
+				pt.x, pt.y,
+				wnd_aux,
+				NULL
+			);
+			ShowWindow(wnd_aux, SW_HIDE);
+		}
+	}
 
 	void on_main_restore() const {
 		ShowWindow(wnd_main, SW_SHOW);

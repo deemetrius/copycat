@@ -65,7 +65,28 @@ INT WINAPI WinMain(HINSTANCE h_inst, HINSTANCE h_inst_prev, PSTR args, INT cmd_s
 		wincl.cbWndExtra = 0;
 		wincl.hbrBackground = (HBRUSH) COLOR_WINDOW;
 		if( !RegisterClassEx(&wincl) ) {
-			log(L"error: RegisterClassEx");
+			log(L"error: RegisterClassEx main");
+			return 0;
+		}
+	}
+
+	// aux window class
+	{
+		WNDCLASSEX wincl{};
+		wincl.cbSize = sizeof(WNDCLASSEX);
+		wincl.hInstance = h_inst;
+		wincl.lpszClassName = wnd_class_aux;
+		wincl.lpfnWndProc = app::proc_aux;
+		wincl.style = 0;
+		wincl.hIcon = NULL;
+		wincl.hIconSm = NULL;
+		wincl.hCursor = LoadCursor(NULL, IDC_ARROW);
+		wincl.lpszMenuName = NULL;
+		wincl.cbClsExtra = 0;
+		wincl.cbWndExtra = 0;
+		wincl.hbrBackground = (HBRUSH) COLOR_WINDOW;
+		if( !RegisterClassEx(&wincl) ) {
+			log(L"error: RegisterClassEx aux");
 			return 0;
 		}
 	}
@@ -99,18 +120,40 @@ INT WINAPI WinMain(HINSTANCE h_inst, HINSTANCE h_inst_prev, PSTR args, INT cmd_s
 		return 0;
 	}
 
+	// aux window
+	cat.wnd_aux = CreateWindowEx(
+		WS_EX_TOOLWINDOW, // ex_style
+		wnd_class_aux, // wnd_class
+		_T(" "), // title
+		WS_POPUP, // style
+		CW_USEDEFAULT, // pos_x
+		CW_USEDEFAULT, // pos_y
+		1, // width
+		1, // height
+		HWND_DESKTOP, // parent
+		NULL, // menu
+		h_inst, // instance handler
+		NULL // no creation data
+	);
+	if( !cat.wnd_aux ) {
+		log(L"error: CreateWindowEx aux");
+		return 0;
+	}
+
 	//
 	cat.on_create(h_inst);
 	cat.make_menu();
 	ShowWindow(cat.wnd_main, SW_SHOWNORMAL);
 	SetFocus(cat.wnd_name);
 	ShowWindow(cat.wnd_main, SW_HIDE);
+	ShowWindow(cat.wnd_aux, SW_SHOWNORMAL);
+	ShowWindow(cat.wnd_aux, SW_HIDE);
 
 	// tray icon
 	NOTIFYICONDATA nid{};
 	nid.cbSize = sizeof(nid);
 	nid.uID = app::id_tray;
-	nid.hWnd = cat.wnd_main;
+	nid.hWnd = cat.wnd_aux;
 	nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
 	nid.uCallbackMessage = WM_USER;
 	//LoadIconMetric(NULL, IDI_APPLICATION, LIM_SMALL, &(nid.hIcon) );
@@ -137,6 +180,83 @@ INT WINAPI WinMain(HINSTANCE h_inst, HINSTANCE h_inst_prev, PSTR args, INT cmd_s
 
 	// return-value is 0 - that PostQuitMessage() gave
 	return messages.wParam;
+}
+
+LRESULT CALLBACK app::proc_aux(HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_param) {
+	switch( msg ) {
+	case WM_CLOSE:
+		{
+			app & cat = app::instance();
+			ShowWindow(cat.wnd_aux, SW_HIDE);
+		}
+		return 0;
+	case WM_COMMAND:
+		switch( HIWORD(w_param) ) { // code
+		case 0:
+		case 1:
+			switch( WORD id_c = LOWORD(w_param) ) {
+			case id_exit:
+				PostQuitMessage(0);
+				return 0;
+			case id_edit:
+				{
+					app & cat = app::instance();
+					cat.on_main_restore();
+				}
+				return 0;
+			default:
+				if( id_c >= id_first ) {
+					app & cat = app::instance();
+					INT id_go = id_c - id_first, id_mod = id_go % id_step;
+					id_go -= id_mod;
+					id_go /= id_step;
+					if( static_cast<t_data::t_items::size_type>(id_go) < cat.data.items.size() ) {
+						switch( id_mod ) {
+						case 0:
+							cat.data.items[id_go].put(cat.wnd_main);
+							return 0;
+						case 1:
+							{
+								cat.on_main_restore();
+								cat.on_list_sel(id_go);
+								SetFocus(cat.wnd_list);
+							}
+							return 0;
+						} // switch id_mod
+					}
+				}
+			} // switch id_c
+		} // switch code
+		break;
+	case WM_USER:
+		switch( w_param ) {
+		case id_tray:
+			switch( l_param ) {
+			case WM_LBUTTONUP:
+				{
+					app & cat = app::instance();
+					cat.on_show_tray_menu();
+				}
+				return 0;
+			case WM_RBUTTONUP:
+				{
+					app & cat = app::instance();
+					if( IsWindowVisible(cat.wnd_main) ) {
+						//const int restore = IsZoomed(cat.wnd_main) ? SW_SHOWMAXIMIZED : SW_RESTORE;
+						BOOL mn = IsIconic(cat.wnd_main);
+						ShowWindow(cat.wnd_main, mn ? (IsZoomed(cat.wnd_main) ? SW_SHOWMAXIMIZED : SW_RESTORE) : SW_HIDE);
+						if( mn ) SetForegroundWindow(cat.wnd_main);
+					} else {
+						cat.on_main_restore();
+					}
+				}
+				return 0;
+			} // switch l_param
+			break;
+		} // switch w_param
+		break;
+	} // switch msg
+	return DefWindowProc(hwnd, msg, w_param, l_param);
 }
 
 LRESULT CALLBACK app::proc_main(HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_param) {
@@ -244,7 +364,7 @@ LRESULT CALLBACK app::proc_main(HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_pa
 		case 0:
 		case 1:
 		//case BN_CLICKED:
-			switch( WORD id_c = LOWORD(w_param) ) {
+			switch( /*WORD id_c =*/ LOWORD(w_param) ) {
 			case id_exit:
 				PostQuitMessage(0);
 				return 0;
@@ -264,12 +384,12 @@ LRESULT CALLBACK app::proc_main(HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_pa
 					cat.data.write();
 				}
 				return 0;
-			case id_edit:
+			/*case id_edit:
 				{
 					app & cat = app::instance();
 					cat.on_main_restore();
 				}
-				return 0;
+				return 0;*/
 			case id_name_label:
 				{
 					app & cat = app::instance();
@@ -301,7 +421,7 @@ LRESULT CALLBACK app::proc_main(HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_pa
 					cat.on_list_del();
 				}
 				return 0;
-			default:
+			/*default:
 				if( id_c >= id_first ) {
 					app & cat = app::instance();
 					INT id_go = id_c - id_first, id_mod = id_go % id_step;
@@ -321,7 +441,7 @@ LRESULT CALLBACK app::proc_main(HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_pa
 							}
 						} // switch
 					}
-				}
+				}*/
 			} // switch id_c
 			break;
 		} // switch code
@@ -337,30 +457,30 @@ LRESULT CALLBACK app::proc_main(HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_pa
 			t_list::resize(&cat, rc);
 		}
 		return 0;
+	/*case WM_USER +1:
+		{
+			app & cat = app::instance();
+			cat.on_show_tray_menu();
+			if( !cat.was_visible ) ShowWindow(cat.wnd_main, SW_HIDE);
+		}
+		return 0;
 	case WM_USER:
 		switch( w_param ) {
 		case id_tray:
 			switch( l_param ) {
 			case WM_LBUTTONUP:
 				{
-					POINT pt;
-					if( GetCursorPos(&pt) ) {
-						app & cat = app::instance();
-						BOOL vis = IsWindowVisible(cat.wnd_main);
-						if( !vis ) ShowWindow(cat.wnd_main, SW_SHOWMINIMIZED);
+					app & cat = app::instance();
+					if(( cat.was_visible = IsWindowVisible(cat.wnd_main) )) {
+						cat.on_show_tray_menu();
+					} else {
+						cat.is_req_tray_menu = true;
+						ShowWindow(cat.wnd_main, SW_SHOWMINIMIZED);
 						SetForegroundWindow(cat.wnd_main);
-						cat.make_menu_only();
-						TrackPopupMenuEx(
-							cat.menu_tray,
-							TPM_LEFTALIGN | TPM_BOTTOMALIGN | TPM_LEFTBUTTON,
-							pt.x, pt.y,
-							cat.wnd_main,
-							NULL
-						);
-						if( !vis ) ShowWindow(cat.wnd_main, SW_HIDE);
-						return 0;
+						SendMessage(cat.wnd_main, WM_USER +1, 0, 0);
 					}
 				}
+				return 0;
 			case WM_RBUTTONUP:
 				{
 					app & cat = app::instance();
@@ -377,7 +497,7 @@ LRESULT CALLBACK app::proc_main(HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_pa
 			}
 			break;
 		}
-		break;
+		break;*/
 	}
 	return DefWindowProc(hwnd, msg, w_param, l_param);
 }
