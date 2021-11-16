@@ -330,4 +330,16 @@ struct actions_text {
 	}
 };
 
+template <class C, template <class C1> class T>
+inline bool operator == (const basic_text<C, T> & t1, const basic_text<C, T> & t2) {
+	using traits = T<C>;
+	return t1->len_ == t2->len_ && !traits::compare(t1->cs_, t2->cs_);
+}
+
+template <class C, template <class C1> class T>
+inline bool operator != (const basic_text<C, T> & t1, const basic_text<C, T> & t2) {
+	using traits = T<C>;
+	return t1->len_ != t2->len_ || traits::compare(t1->cs_, t2->cs_);
+}
+
 } // ns: ex

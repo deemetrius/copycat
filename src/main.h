@@ -119,6 +119,10 @@ struct omg {
 	int x, y, w, h;
 };
 
+struct omg_ex : public omg {
+	int col_name, col_value;
+};
+
 template <class T>
 struct is_window_host {
 	using h_member = HWND T::*;
@@ -354,11 +358,11 @@ struct t_data {
 	}
 
 	bool write() const {
-		if( !check() ) return false;
+		//if( !check(false) ) return false;
 		t_out out;
 		out.open(path, std::ios_base::binary);
 		if( !out.is_open() ) {
-			log(L"error: Unable to open config for reading");
+			log(L"error: Unable to open config for writing");
 			return false;
 		}
 		t_text name, value;
@@ -418,6 +422,14 @@ struct app : public base_app, public is_window_host<base_app> {
 		ui_top_set = ui_top_add - dlu_space_related_y - dlu_button_y,
 		ui_top_list = ui_bottom_value + dlu_space_related_y
 	};
+	enum n_def : int {
+		def_w = 400,
+		def_h = 400,
+		def_col_name = 170,
+		def_col_value = 170,
+		def_space_x = 10,
+		def_space_y = 10
+	};
 
 	using t_name_label = is_window<&base_app::wnd_name_label, WC_STATIC, id_name_label,
 		WS_VISIBLE | WS_CHILD |
@@ -440,8 +452,8 @@ struct app : public base_app, public is_window_host<base_app> {
 		ui_left, ui_top_value_hidden, ui_width, dlu_button_y
 	>;
 	using t_value = is_window<&base_app::wnd_value, WC_EDIT, id_value,
-		WS_VISIBLE | WS_CHILD | WS_BORDER | WS_TABSTOP |
-		ES_LEFT | ES_MULTILINE | ES_WANTRETURN,
+		WS_VISIBLE | WS_CHILD | WS_BORDER | WS_TABSTOP | WS_HSCROLL | WS_VSCROLL |
+		ES_LEFT | ES_MULTILINE | ES_WANTRETURN | ES_AUTOHSCROLL | ES_AUTOVSCROLL,
 		ui_left_2, ui_top_value, - ui_left, ui_height_value
 	>;
 	using t_set = is_window<&base_app::wnd_set, WC_BUTTON, id_set,
@@ -476,7 +488,58 @@ struct app : public base_app, public is_window_host<base_app> {
 
 	~app() { if( menu_tray ) DestroyMenu(menu_tray); }
 
-	void on_create(HINSTANCE h_inst) {
+	static UINT get_taskbar_edge(UINT def_value = ABE_BOTTOM) {
+		APPBARDATA inf;
+		inf.cbSize = sizeof(APPBARDATA);
+		return SHAppBarMessage(ABM_GETTASKBARPOS, &inf) ? inf.uEdge : def_value;
+	}
+
+	static UINT get_menu_flags() {
+		switch( get_taskbar_edge() ) {
+		case ABE_BOTTOM: return TPM_LEFTALIGN | TPM_BOTTOMALIGN;
+		case ABE_TOP: return TPM_LEFTALIGN | TPM_TOPALIGN;
+		case ABE_LEFT: return TPM_LEFTALIGN | TPM_BOTTOMALIGN;
+		default: return TPM_RIGHTALIGN | TPM_BOTTOMALIGN; // case ABE_RIGHT:
+		} // switch
+	}
+
+	static omg_ex omg_default() {
+		omg_ex ret;
+		ret.w = def_w;
+		ret.h = def_h;
+		ret.col_name = def_col_name;
+		ret.col_value = def_col_value;
+		if( RECT rc; SystemParametersInfo(SPI_GETWORKAREA, 0, &rc, 0) ) {
+			bool need_x = true;
+			switch( get_taskbar_edge() ) {
+			case ABE_BOTTOM:
+				ret.y = rc.bottom - def_space_y - ret.h;
+				break;
+			case ABE_TOP:
+				ret.y = rc.top + def_space_y;
+				break;
+			case ABE_LEFT:
+				ret.x = rc.left + def_space_x;
+				need_x = false;
+				break;
+			default: // case ABE_RIGHT:
+				ret.x = rc.right - def_space_x - ret.w;
+				need_x = false;
+				break;
+			} // switch
+			if( need_x ) {
+				ret.x = rc.right - def_space_x - ret.w;
+			} else {
+				ret.y = rc.bottom - def_space_y - ret.h;
+			}
+		} else {
+			ret.x = CW_USEDEFAULT;
+			ret.y = CW_USEDEFAULT;
+		}
+		return ret;
+	}
+
+	void on_create(HINSTANCE h_inst, const omg_ex & pos) {
 		RECT rc;
 		GetClientRect(wnd_main, &rc);
 		t_list::create(this, rc, empty_str, wnd_main, h_inst);
@@ -488,9 +551,10 @@ struct app : public base_app, public is_window_host<base_app> {
 		{
 			LVCOLUMN col{};
 			col.mask = LVCF_WIDTH | LVCF_TEXT;
-			col.cx = 170;
+			col.cx = pos.col_name;
 			col.pszText = _T("Name");
 			ListView_InsertColumn(wnd_list, 0, &col);
+			col.cx = pos.col_value;
 			col.pszText = _T("Value");
 			ListView_InsertColumn(wnd_list, 1, &col);
 		}
@@ -585,7 +649,7 @@ struct app : public base_app, public is_window_host<base_app> {
 			SetForegroundWindow(wnd_aux);
 			TrackPopupMenuEx(
 				menu_tray,
-				TPM_LEFTALIGN | TPM_BOTTOMALIGN | TPM_LEFTBUTTON,
+				get_menu_flags() | TPM_LEFTBUTTON,
 				pt.x, pt.y,
 				wnd_aux,
 				NULL
@@ -696,16 +760,6 @@ struct app : public base_app, public is_window_host<base_app> {
 			cur_item = item;
 			//
 			TCHAR none[] = _T("");
-			/*LVITEM inf{};
-			inf.mask = LVIF_DI_SETITEM | LVIF_TEXT; // LVIF_STATE
-			inf.iItem = current;
-			inf.iSubItem = 0;
-			inf.pszText = item.name->s_ ? item.name->s_ : none;
-			ListView_SetItem(wnd_list, &inf);
-			//
-			inf.iSubItem = 1;
-			inf.pszText = (!item.is_value_hidden && item.value->s_) ? item.value->s_ : none;
-			ListView_SetItem(wnd_list, &inf);*/
 			ListView_SetItemText(wnd_list, current, 0, item.name->s_ ? item.name->s_ : none);
 			ListView_SetItemText(wnd_list, current, 1, item.is_value_hidden || !item.value->s_ ? none : item.value->s_);
 			//

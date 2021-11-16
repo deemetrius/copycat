@@ -49,42 +49,31 @@ INT WINAPI WinMain(HINSTANCE h_inst, HINSTANCE h_inst_prev, PSTR args, INT cmd_s
 	cat.data.path = f_path;
 	cat.data.read();
 
-	// main window class
+	// main & aux window class
 	{
 		WNDCLASSEX wincl{};
 		wincl.cbSize = sizeof(WNDCLASSEX);
 		wincl.hInstance = h_inst;
+		wincl.cbClsExtra = 0;
+		wincl.cbWndExtra = 0;
+		wincl.lpszMenuName = NULL;
+		wincl.hCursor = LoadCursor(NULL, IDC_ARROW);
+		wincl.hIconSm = NULL;
+		wincl.hbrBackground = (HBRUSH) COLOR_WINDOW;
+		// main
 		wincl.lpszClassName = wnd_class_name;
 		wincl.lpfnWndProc = app::proc_main;
 		wincl.style = CS_DBLCLKS; // CS_NOCLOSE
 		wincl.hIcon = LoadIcon(h_inst, MAKEINTRESOURCE(0) );
-		wincl.hIconSm = NULL;
-		wincl.hCursor = LoadCursor(NULL, IDC_ARROW);
-		wincl.lpszMenuName = NULL;
-		wincl.cbClsExtra = 0;
-		wincl.cbWndExtra = 0;
-		wincl.hbrBackground = (HBRUSH) COLOR_WINDOW;
 		if( !RegisterClassEx(&wincl) ) {
 			log(L"error: RegisterClassEx main");
 			return 0;
 		}
-	}
-
-	// aux window class
-	{
-		WNDCLASSEX wincl{};
-		wincl.cbSize = sizeof(WNDCLASSEX);
-		wincl.hInstance = h_inst;
+		// aux
 		wincl.lpszClassName = wnd_class_aux;
 		wincl.lpfnWndProc = app::proc_aux;
 		wincl.style = 0;
 		wincl.hIcon = NULL;
-		wincl.hIconSm = NULL;
-		wincl.hCursor = LoadCursor(NULL, IDC_ARROW);
-		wincl.lpszMenuName = NULL;
-		wincl.cbClsExtra = 0;
-		wincl.cbWndExtra = 0;
-		wincl.hbrBackground = (HBRUSH) COLOR_WINDOW;
 		if( !RegisterClassEx(&wincl) ) {
 			log(L"error: RegisterClassEx aux");
 			return 0;
@@ -99,6 +88,8 @@ INT WINAPI WinMain(HINSTANCE h_inst, HINSTANCE h_inst_prev, PSTR args, INT cmd_s
 		AppendMenu(cat.menu_main, MF_ENABLED | MF_STRING, app::id_exit, _T("&Quit") );
 	}
 
+	omg_ex pos = app::omg_default();
+
 	cat.dlu.rescale();
 	// main window
 	cat.wnd_main = CreateWindowEx(
@@ -106,10 +97,10 @@ INT WINAPI WinMain(HINSTANCE h_inst, HINSTANCE h_inst_prev, PSTR args, INT cmd_s
 		wnd_class_name, // wnd_class
 		_T("copycat"), // title
 		WS_OVERLAPPED | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_CAPTION | WS_SIZEBOX, // style // WS_BORDER
-		CW_USEDEFAULT, // pos_x
-		CW_USEDEFAULT, // pos_y
-		400, // width
-		400, //dlu.space_margin_y * 2 + size_list_y + GetSystemMetrics(SM_CYCAPTION) + GetSystemMetrics(SM_CYSIZEFRAME /*SM_CYFIXEDFRAME*/) * 2, // height
+		pos.x, // pos_x
+		pos.y, // pos_y
+		pos.w, // width
+		pos.h, // height //dlu.space_margin_y * 2 + size_list_y + GetSystemMetrics(SM_CYCAPTION) + GetSystemMetrics(SM_CYSIZEFRAME /*SM_CYFIXEDFRAME*/) * 2,
 		HWND_DESKTOP, // parent
 		cat.menu_main, // menu
 		h_inst, // instance handler
@@ -141,7 +132,7 @@ INT WINAPI WinMain(HINSTANCE h_inst, HINSTANCE h_inst_prev, PSTR args, INT cmd_s
 	}
 
 	//
-	cat.on_create(h_inst);
+	cat.on_create(h_inst, pos);
 	cat.make_menu();
 	ShowWindow(cat.wnd_main, SW_SHOWNORMAL);
 	SetFocus(cat.wnd_name);
@@ -384,12 +375,6 @@ LRESULT CALLBACK app::proc_main(HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_pa
 					cat.data.write();
 				}
 				return 0;
-			/*case id_edit:
-				{
-					app & cat = app::instance();
-					cat.on_main_restore();
-				}
-				return 0;*/
 			case id_name_label:
 				{
 					app & cat = app::instance();
@@ -421,27 +406,6 @@ LRESULT CALLBACK app::proc_main(HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_pa
 					cat.on_list_del();
 				}
 				return 0;
-			/*default:
-				if( id_c >= id_first ) {
-					app & cat = app::instance();
-					INT id_go = id_c - id_first, id_mod = id_go % id_step;
-					id_go -= id_mod;
-					id_go /= id_step;
-					if( static_cast<t_data::t_items::size_type>(id_go) < cat.data.items.size() ) {
-						switch( id_mod ) {
-						case 0:
-							cat.data.items[id_go].put(cat.wnd_main);
-							return 0;
-						case 1:
-							{
-								cat.on_main_restore();
-								cat.on_list_sel(id_go);
-								SetFocus(cat.wnd_list);
-								return 0;
-							}
-						} // switch
-					}
-				}*/
 			} // switch id_c
 			break;
 		} // switch code
@@ -457,47 +421,6 @@ LRESULT CALLBACK app::proc_main(HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_pa
 			t_list::resize(&cat, rc);
 		}
 		return 0;
-	/*case WM_USER +1:
-		{
-			app & cat = app::instance();
-			cat.on_show_tray_menu();
-			if( !cat.was_visible ) ShowWindow(cat.wnd_main, SW_HIDE);
-		}
-		return 0;
-	case WM_USER:
-		switch( w_param ) {
-		case id_tray:
-			switch( l_param ) {
-			case WM_LBUTTONUP:
-				{
-					app & cat = app::instance();
-					if(( cat.was_visible = IsWindowVisible(cat.wnd_main) )) {
-						cat.on_show_tray_menu();
-					} else {
-						cat.is_req_tray_menu = true;
-						ShowWindow(cat.wnd_main, SW_SHOWMINIMIZED);
-						SetForegroundWindow(cat.wnd_main);
-						SendMessage(cat.wnd_main, WM_USER +1, 0, 0);
-					}
-				}
-				return 0;
-			case WM_RBUTTONUP:
-				{
-					app & cat = app::instance();
-					if( IsWindowVisible(cat.wnd_main) ) {
-						const int restore = IsZoomed(cat.wnd_main) ? SW_SHOWMAXIMIZED : SW_RESTORE;
-						BOOL mn = IsIconic(cat.wnd_main);
-						ShowWindow(cat.wnd_main, mn ? restore : SW_HIDE);
-						if( mn ) SetForegroundWindow(cat.wnd_main);
-					} else {
-						cat.on_main_restore();
-					}
-				}
-				return 0;
-			}
-			break;
-		}
-		break;*/
 	}
 	return DefWindowProc(hwnd, msg, w_param, l_param);
 }
