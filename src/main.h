@@ -62,13 +62,14 @@ inline std::basic_ostream<C2, T2> & operator << (
 	M_DLU_ALIAS(v_from,	space_group_margin_bot_right,	space_margin	)
 // https://docs.microsoft.com/en-us/previous-versions/ms997619(v=msdn.10)?redirectedfrom=MSDN
 
+using t_pos = int;
 enum class n_not_init { val };
-enum n_dlu : int { dlu_cx = 4, dlu_cy = 8, M_DLU_MEMBERS(M_DLU_ENUM, M_DLU_ALIAS_ENUM) };
+enum n_dlu : t_pos { dlu_cx = 4, dlu_cy = 8, M_DLU_MEMBERS(M_DLU_ENUM, M_DLU_ALIAS_ENUM) };
 
 struct t_dlu_base {
 	// types
 	using both = LONG;
-	using type = int;
+	using type = t_pos;
 
 	// actions
 	type pixel_x(type tpl) const { return MulDiv(tpl, base_x, dlu_cx); }
@@ -116,11 +117,11 @@ struct hold_text {
 };
 
 struct omg {
-	int x, y, w, h;
+	t_pos x, y, w, h;
 };
 
 struct omg_ex : public omg {
-	int col_name, col_value;
+	t_pos col_name, col_value;
 };
 
 template <class T>
@@ -135,7 +136,7 @@ struct is_window_host {
 		}
 	};
 
-	template <h_member Member, hold_text Class, WORD Id, DWORD Style, int X, int Y, int W, int H>
+	template <h_member Member, hold_text Class, WORD Id, DWORD Style, t_pos X, t_pos Y, t_pos W, t_pos H>
 	struct is_window : public base_is_window<Member> {
 		using base = base_is_window<Member>;
 
@@ -190,7 +191,15 @@ env_data		[] = _T("AppData"),
 appname			[] = _T("copycat"),
 data_dir		[] = _T("dt_copycat"),
 wnd_class_name	[] = _T("copycat_main"),
-wnd_class_aux	[] = _T("copycat_aux");
+wnd_class_aux	[] = _T("copycat_aux"),
+wnd_class_about	[] = _T("copycat_about"),
+cont_about		[] = _T(
+	"Source code: <a href=\"https://github.com/deemetrius/copycat\">https://github.com/deemetrius/copycat</a>\n"
+	"This program was written by Dima Tumaly.\n\n"
+	"Telegram: <a href=\"https://t.me/janesaw\">@janesaw</a>\n"
+	"Email: <a href=\"mailto:sm0ke999@yandex.ru\">sm0ke999@yandex.ru</a>\n"
+	"VK: <a href=\"https://vk.com/deemetrius\">https://vk.com/deemetrius</a>"
+);
 constexpr wchar_t
 tx_edit			[] = L"\U0001F589",
 tx_clear		[] = L"\U0001F5F6";
@@ -378,7 +387,8 @@ struct t_data {
 
 struct base_app {
 	t_dlu_base dlu;
-	HWND wnd_main, wnd_name_label, wnd_name, wnd_clear, wnd_value_hidden, wnd_value, wnd_set, wnd_add, wnd_del, wnd_list;
+	HWND wnd_main, wnd_name_label, wnd_name, wnd_clear, wnd_value_hidden, wnd_value, wnd_set, wnd_add, wnd_del, wnd_list,
+	awnd_git;
 
 	base_app() : dlu(n_not_init::val) {}
 };
@@ -401,9 +411,10 @@ struct app : public base_app, public is_window_host<base_app> {
 	enum n_id : WORD {
 		id_exit = 10, id_edit, id_tray, id_about, id_save, id_load,
 		id_name_label, id_name, id_clear, id_value_hidden, id_value, id_add, id_del, id_set, id_list,
+		aid_git,
 		id_first = 100, id_step = 10
 	};
-	enum n_ui : int {
+	enum n_ui : t_pos {
 		ui_left = dlu_space_margin_x,
 		ui_width = dlu_button_x,
 		ui_width_2 = dlu_edit_y,
@@ -420,9 +431,13 @@ struct app : public base_app, public is_window_host<base_app> {
 		ui_top_del = ui_bottom_value - dlu_button_y,
 		ui_top_add = ui_top_del - dlu_space_related_y - dlu_button_y,
 		ui_top_set = ui_top_add - dlu_space_related_y - dlu_button_y,
-		ui_top_list = ui_bottom_value + dlu_space_related_y
+		ui_top_list = ui_bottom_value + dlu_space_related_y,
+		aui_left = dlu_space_margin_x,
+		aui_width = 220,
+		aui_top_git = dlu_space_margin_y,
+		aui_height_git = 54
 	};
-	enum n_def : int {
+	enum n_def : t_pos {
 		def_w = 400,
 		def_h = 400,
 		def_col_name = 170,
@@ -431,6 +446,7 @@ struct app : public base_app, public is_window_host<base_app> {
 		def_space_y = 10
 	};
 
+	// main
 	using t_name_label = is_window<&base_app::wnd_name_label, WC_STATIC, id_name_label,
 		WS_VISIBLE | WS_CHILD |
 		SS_NOTIFY, // SS_LEFTNOWORDWRAP SS_RIGHT
@@ -476,15 +492,27 @@ struct app : public base_app, public is_window_host<base_app> {
 		LVS_REPORT | LVS_EDITLABELS | LVS_NOSORTHEADER | LVS_SHOWSELALWAYS | LVS_SINGLESEL,
 		dlu_space_smallest_x, ui_top_list, - dlu_space_smallest_x, - dlu_space_smallest_y
 	>;
+	// about
+	/*using at_git_label = is_window<&base_app::awnd_git_label, WC_STATIC, aid_git_label,
+		WS_VISIBLE | WS_CHILD, // SS_LEFTNOWORDWRAP SS_RIGHT
+		aui_left, aui_top_git_label, aui_width, dlu_label_y
+	>;*/
+	using at_git = is_window<&base_app::awnd_git, WC_LINK, aid_git,
+		WS_TABSTOP | WS_VISIBLE | WS_CHILD // | WS_BORDER
+		, // LWS_TRANSPARENT
+		aui_left, aui_top_git, aui_width, aui_height_git
+	>;
 
 	t_data data;
-	HWND wnd_main, wnd_aux;
+	HWND wnd_main, wnd_aux, wnd_about;
 	HMENU menu_main, menu_tray = NULL;
-	bool is_list_ready = false, is_data_changed = false;
+	bool is_list_ready = false, is_data_changed = false, need_calc_about = true;
 	int current = -1;
+	fs::path path_ini;
 
 	static LRESULT CALLBACK proc_main(HWND, UINT, WPARAM, LPARAM);
 	static LRESULT CALLBACK proc_aux(HWND, UINT, WPARAM, LPARAM);
+	static LRESULT CALLBACK proc_about(HWND, UINT, WPARAM, LPARAM);
 
 	~app() { if( menu_tray ) DestroyMenu(menu_tray); }
 
@@ -503,12 +531,34 @@ struct app : public base_app, public is_window_host<base_app> {
 		} // switch
 	}
 
-	static omg_ex omg_default() {
+	static bool maybe_param(t_pos & num, const char * key, const t_data::t_string & name, const t_data::t_string & value) {
+		if( std::strcmp(name.c_str(), key) ) return false;
+		try {
+			if( t_pos n = std::stoul(value) ) num = n;
+		} catch ( ... ) {}
+		return true;
+	}
+
+	omg_ex omg_default() {
 		omg_ex ret;
 		ret.w = def_w;
 		ret.h = def_h;
 		ret.col_name = def_col_name;
 		ret.col_value = def_col_value;
+		//
+		{
+			t_data::t_in in;
+			in.open(path_ini, std::ios_base::binary);
+			if( in.is_open() ) {
+				t_data::t_string name, value;
+				while( std::getline(in, name, ':') && std::getline(in, value) ) {
+					maybe_param(ret.w,			"width",	name, value) ||
+					maybe_param(ret.h,			"height",	name, value) ||
+					maybe_param(ret.col_name,	"name",		name, value) ||
+					maybe_param(ret.col_value,	"value",	name, value);
+				}
+			}
+		}
 		if( RECT rc; SystemParametersInfo(SPI_GETWORKAREA, 0, &rc, 0) ) {
 			bool need_x = true;
 			switch( get_taskbar_edge() ) {
@@ -537,6 +587,26 @@ struct app : public base_app, public is_window_host<base_app> {
 			ret.y = CW_USEDEFAULT;
 		}
 		return ret;
+	}
+
+	bool save_pos() const {
+		t_data::t_out out;
+		out.open(path_ini, std::ios_base::binary);
+		if( !out.is_open() ) {
+			log(L"error: Unable to open ini for writing");
+			return false;
+		}
+		if( RECT rc; GetWindowRect(wnd_main, &rc) ) {
+			out
+			<< "width:" << (rc.right - rc.left) << "\n"
+			<< "height:" << (rc.bottom - rc.top) << "\n";
+		} else {
+			log(L"error: GetClientRect main");
+		}
+		out
+		<< "name:" << ListView_GetColumnWidth(wnd_list, 0) << "\n"
+		<< "value:" << ListView_GetColumnWidth(wnd_list, 1) << "\n";
+		return true;
 	}
 
 	void on_create(HINSTANCE h_inst, const omg_ex & pos) {
@@ -578,6 +648,31 @@ struct app : public base_app, public is_window_host<base_app> {
 		t_set::create(this, rc, _T("&Set"), wnd_main, h_inst, font);
 		t_add::create(this, rc, _T("&Add"), wnd_main, h_inst, font);
 		t_del::create(this, rc, _T("&Del"), wnd_main, h_inst, font);
+		// about
+		GetClientRect(wnd_about, &rc);
+		//at_git_label::create(this, rc, _T("Source code"), wnd_about, h_inst, font);
+		at_git::create(this, rc, cont_about, wnd_about, h_inst, font);
+		//Button_SetNote(awnd_git, _T("Source code") );
+	}
+
+	void on_about_calc_size() {
+		if(
+			RECT rc_work, rc_git; //, rc_client, rc_about;
+			SystemParametersInfo(SPI_GETWORKAREA, 0, &rc_work, 0) &&
+			GetWindowRect(awnd_git, &rc_git) /*&&
+			GetClientRect(wnd_about, &rc_client) &&
+			GetWindowRect(wnd_about, &rc_about)*/
+		) {
+			t_pos
+			//delta_x = rc_about.right - rc_about.left - rc_client.right,
+			//delta_y = rc_about.bottom - rc_about.top - rc_client.bottom,
+			size_x = rc_git.right + dlu.pixel_x(dlu_space_margin_x), //+ delta_x,
+			size_y = rc_git.bottom + dlu.pixel_y(dlu_space_margin_y), //+ delta_y,
+			pos_x = rc_work.left + (rc_work.right - rc_work.left - size_x) / 2,
+			pos_y = rc_work.top + (rc_work.bottom - rc_work.top - size_y) / 2;
+			MoveWindow(wnd_about, pos_x, pos_y, size_x, size_y, FALSE);
+		}
+		need_calc_about = false;
 	}
 
 	bool make_menu_only() {

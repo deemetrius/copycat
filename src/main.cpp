@@ -30,13 +30,13 @@ INT WINAPI WinMain(HINSTANCE h_inst, HINSTANCE h_inst_prev, PSTR args, INT cmd_s
 	// log
 	f_path.replace_extension(L"log");
 	t_log::instance().out_.open(f_path, std::ios::binary | std::ios::trunc);
-	log(L"build: " __DATE__ " ~ " __TIME__);
+	log(L"build: " __DATE__ " - " __TIME__);
 
 	// init common controls
 	{
 		INITCOMMONCONTROLSEX common{};
 		common.dwSize = sizeof(INITCOMMONCONTROLSEX);
-		common.dwICC = ICC_STANDARD_CLASSES | ICC_TAB_CLASSES | ICC_LISTVIEW_CLASSES;
+		common.dwICC = ICC_STANDARD_CLASSES | ICC_LISTVIEW_CLASSES | ICC_LINK_CLASS; // ICC_TAB_CLASSES
 		if( InitCommonControlsEx(&common) == FALSE ) {
 			log(L"error: InitCommonControlsEx");
 			return 0;
@@ -49,7 +49,7 @@ INT WINAPI WinMain(HINSTANCE h_inst, HINSTANCE h_inst_prev, PSTR args, INT cmd_s
 	cat.data.path = f_path;
 	cat.data.read();
 
-	// main & aux window class
+	// window class: main, aux, about
 	{
 		WNDCLASSEX wincl{};
 		wincl.cbSize = sizeof(WNDCLASSEX);
@@ -78,6 +78,15 @@ INT WINAPI WinMain(HINSTANCE h_inst, HINSTANCE h_inst_prev, PSTR args, INT cmd_s
 			log(L"error: RegisterClassEx aux");
 			return 0;
 		}
+		// about
+		wincl.lpszClassName = wnd_class_about;
+		wincl.lpfnWndProc = app::proc_about;
+		wincl.style = 0;
+		wincl.hIcon = NULL;
+		if( !RegisterClassEx(&wincl) ) {
+			log(L"error: RegisterClassEx about");
+			return 0;
+		}
 	}
 
 	// main menu
@@ -88,7 +97,9 @@ INT WINAPI WinMain(HINSTANCE h_inst, HINSTANCE h_inst_prev, PSTR args, INT cmd_s
 		AppendMenu(cat.menu_main, MF_ENABLED | MF_STRING, app::id_exit, _T("&Quit") );
 	}
 
-	omg_ex pos = app::omg_default();
+	f_path.replace_extension(L"ini");
+	cat.path_ini = f_path;
+	omg_ex pos = cat.omg_default();
 
 	cat.dlu.rescale();
 	// main window
@@ -131,11 +142,32 @@ INT WINAPI WinMain(HINSTANCE h_inst, HINSTANCE h_inst_prev, PSTR args, INT cmd_s
 		return 0;
 	}
 
+	// about window
+	cat.wnd_about = CreateWindowEx(
+		WS_EX_TOOLWINDOW | WS_EX_CONTROLPARENT | WS_EX_STATICEDGE | WS_EX_WINDOWEDGE, // ex_style
+		wnd_class_about, // wnd_class
+		_T("about copycat"), // title
+		WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_DLGFRAME, // style
+		CW_USEDEFAULT, // pos_x
+		CW_USEDEFAULT, // pos_y
+		500, // width
+		200, // height
+		cat.wnd_main, // parent
+		NULL, // menu
+		h_inst, // instance handler
+		NULL // no creation data
+	);
+	if( !cat.wnd_about ) {
+		log(L"error: CreateWindowEx about");
+		return 0;
+	}
+
 	//
 	cat.on_create(h_inst, pos);
 	cat.make_menu();
 	ShowWindow(cat.wnd_main, SW_SHOWNORMAL);
-	SetFocus(cat.wnd_name);
+	ShowWindow(cat.wnd_about, SW_SHOWNORMAL);
+	ShowWindow(cat.wnd_about, SW_HIDE);
 	ShowWindow(cat.wnd_main, SW_HIDE);
 	ShowWindow(cat.wnd_aux, SW_SHOWNORMAL);
 	ShowWindow(cat.wnd_aux, SW_HIDE);
@@ -157,20 +189,53 @@ INT WINAPI WinMain(HINSTANCE h_inst, HINSTANCE h_inst_prev, PSTR args, INT cmd_s
 	// msg loop
 	MSG messages;
 	while( GetMessage(&messages, NULL, 0, 0) ) {
-		if( !IsDialogMessage(cat.wnd_main, &messages) ) {
-			TranslateMessage(&messages);
-			DispatchMessage(&messages);
-		}
+		if(
+			IsDialogMessage(cat.wnd_main, &messages) ||
+			IsDialogMessage(cat.wnd_about, &messages)
+		) continue;
+		TranslateMessage(&messages);
+		DispatchMessage(&messages);
 	}
 
 	// write config
 	cat.data.write();
+	cat.save_pos();
 
 	// tray icon done
 	Shell_NotifyIcon(NIM_DELETE, &nid);
 
 	// return-value is 0 - that PostQuitMessage() gave
 	return messages.wParam;
+}
+
+LRESULT CALLBACK app::proc_about(HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_param) {
+	switch( msg ) {
+	case WM_CLOSE:
+		{
+			app & cat = app::instance();
+			ShowWindow(cat.wnd_about, SW_HIDE);
+		}
+		return 0;
+	case WM_NOTIFY:
+		{
+			LPNMHDR inf_short = (LPNMHDR) l_param;
+			switch( inf_short->idFrom ) {
+			case aid_git:
+				switch( inf_short->code ) {
+				case NM_CLICK:
+				case NM_RETURN:
+					{
+						PNMLINK inf = (PNMLINK) l_param;
+						ShellExecute(NULL, _T("open"), inf->item.szUrl, NULL, NULL, SW_SHOW);
+					}
+					return 0;
+				} // switch code
+				break;
+			} // switch id
+		}
+		break;
+	} // switch msg
+	return DefWindowProc(hwnd, msg, w_param, l_param);
 }
 
 LRESULT CALLBACK app::proc_aux(HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_param) {
@@ -359,6 +424,17 @@ LRESULT CALLBACK app::proc_main(HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_pa
 			case id_exit:
 				PostQuitMessage(0);
 				return 0;
+			case id_about:
+				{
+					app & cat = app::instance();
+					if( IsWindowVisible(cat.wnd_about) ) {
+						SetForegroundWindow(cat.wnd_about);
+					} else {
+						if( cat.need_calc_about ) cat.on_about_calc_size();
+						ShowWindow(cat.wnd_about, SW_SHOWNORMAL);
+					}
+				}
+				return 0;
 			case id_load:
 				{
 					app & cat = app::instance();
@@ -373,6 +449,7 @@ LRESULT CALLBACK app::proc_main(HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_pa
 				{
 					app & cat = app::instance();
 					cat.data.write();
+					cat.save_pos();
 				}
 				return 0;
 			case id_name_label:
